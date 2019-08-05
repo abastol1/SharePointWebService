@@ -42,7 +42,7 @@ namespace SharpWebService.Controllers
         Return Value: dictionary with category as key, list of filenames as values
         Local Variables:
                     query, string: CAML Query that specifies which fields to extract from given condition(optional) inside <Query> </Query>
-                    listNameDictionary, Dictionary: Stores all the filename categorized by 'Category', key=Category, value=list of filename
+                    mainList, Dictionary: Stores all the filename categorized by 'Category' & 'Page', <value=PageName, key=Dictionary<value=category, key=list of document Names>>
         Algorithm:
                     1) Get the details of document libray from SharePoint
                     2) get name of file, category of file and file extension of the file
@@ -63,9 +63,8 @@ namespace SharpWebService.Controllers
                 "<QueryOptions></QueryOptions>" +
                 "</mylistitemrequest>";
 
+            // Stores all the information from SharePoint Library, <value=PageName, key=Dictionary<value=category, key=list of document Names>>
             Dictionary<string, Dictionary<string, List<string>>> mainList = new Dictionary<string, Dictionary<string, List<string>>>();
-
-            Dictionary<string, List<string>> listNameDictionary = new Dictionary<string, List<string>>();
 
             DataTable dt = null;
             ListsSoapClient.EndpointConfiguration endpoint = new ListsSoapClient.EndpointConfiguration();
@@ -122,12 +121,15 @@ namespace SharpWebService.Controllers
                     }
                     else
                     {
+                        // add fileName directory to the mainList if 'category' already exists in the mainList
                         if (mainList[page].ContainsKey(category))
                         {
                             mainList[page][category].Add(fileName);
                         }
                         else
                         {
+                            // Create a empty list, add filename to the list, then add the list to the sub Dictionary with 'category' as key
+                            // Finally add whole thing to the mainList with 'page' as key
                             List<string> tempList = new List<string>();
                             tempList.Add(fileName);
                             mainList[page].Add(category, tempList);
@@ -161,12 +163,13 @@ namespace SharpWebService.Controllers
                         6) Return the FileStreamResult to the calling application
         ************************************************************************************************* */
         // GET api/values/5
-        [Route("documents/{filename}")]
-        [HttpGet("{filename}")]
+        [Route("documents/{receivedFileName}")]
+        [HttpGet("{receivedFileName}")]
         public async Task<ActionResult> Get(string receivedFileName)
         {
             // making sure any temp documents are not stored on the web api storage
             this.deleteAllTempDocuments();
+
 
             byte[] filedata = new byte[0];
             string contentType = "";
@@ -225,6 +228,7 @@ namespace SharpWebService.Controllers
                         {
                             fileName = fileName.Replace(".aspx", ("." + fileExtension));
                         }
+                        // if fileName is same as 'receivedFileName', then download the file and return the File to the client
                         if (receivedFileName.Equals(fileName))
                         {
                             string filePath = DownLoadAttachment(dr["ows_EncodedAbsUrl"].ToString(), fileName);
@@ -246,6 +250,85 @@ namespace SharpWebService.Controllers
                 XmlElement elm = msgFault.GetDetail<XmlElement>();
             }
             return new FileStreamResult(new MemoryStream(filedata), contentType);
+        }
+
+        /* *********************************************************************
+        Function Name: GetAnnouncements 
+        Purpose: get Announcments & Job Postings from SharePoint Library
+        Parameters:
+                query, string: CAML query to access Document Library
+                ds, DataSet: stores all infos from document library table
+        Return Value: Return Dictionary<Title, Description> that contains information about all the announcements & job postings
+        Local Variables:
+                    
+        Algorithm:
+                    1) 
+        ********************************************************************* */
+        [HttpGet("announcements")]
+        public async Task<string> GetAnnouncements()
+        {
+            string query = "<mylistitemrequest>" +
+                "<Query>" +
+                //"<Where>" +
+                //    "<Eq>" +
+                //        "<FieldRef Name=\"Active\" />" +
+                //        "<Value Type=\"Lookup\">1</Value>" +
+                //    "</Eq>" +
+                //"</Where>" +
+                "</Query>" +
+                "<ViewFields>" +
+                    "<FieldRef Name=\"Description\"/><FieldRef Name=\"Active\" /><FieldRef Name=\"Title\" />" +
+                "</ViewFields>" +
+                "<QueryOptions></QueryOptions>" +
+                "</mylistitemrequest>";
+
+            // Stores all the information from SharePoint Library, <value=PageName, key=Dictionary<value=category, key=list of document Names>>
+            Dictionary<string, string> announcements = new Dictionary<string, string>();
+
+            ListsSoapClient.EndpointConfiguration endpoint = new ListsSoapClient.EndpointConfiguration();
+            ListsSoapClient myService = new ListsSoapClient(endpoint);
+            myService.ClientCredentials.UserName.UserName = Data.EmailUserName;
+            myService.ClientCredentials.UserName.Password = Data.EmailCredentials;
+            XmlDocument doc = new XmlDocument();
+            doc.LoadXml(query);
+
+            XElement queryNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//Query")));
+            XElement viewNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//ViewFields")));
+            XElement optionNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//QueryOptions")));
+            string[] documentLibraryNames = { "JobPostings", "Announcements" };
+
+            DataTable dt = null;
+
+            foreach (string library in documentLibraryNames)
+            {
+                var retNode = await myService.GetListItemsAsync(library, string.Empty, queryNode, viewNode, string.Empty, optionNode, Data.libraryKey);
+
+                // Collection of DataTables, stores many datatables in a single collection
+                DataSet ds = new DataSet();
+                using (StringReader sr = new StringReader(retNode.Body.GetListItemsResult.ToString()))
+                {
+                    ds.ReadXml(sr);
+                }
+
+                if (ds.Tables["Row"] != null && ds.Tables["Row"].Rows.Count > 0)
+                {
+                    dt = ds.Tables["Row"].Copy();
+                    foreach (DataRow dr in dt.Rows)
+                    {
+                        string description = dr["ows_Description"].ToString();
+                        string title = dr["ows_Title"].ToString();
+
+                        if (library.Equals("JobPostings"))
+                        {
+                            title = "Job Posting: " + title;
+                        }
+                        announcements.Add(title, description);
+                    }
+                }
+            }
+
+            // return Serialized JSON object back to the calling application
+            return JsonConvert.SerializeObject(announcements);
         }
 
 

@@ -41,7 +41,7 @@ namespace SharpWebService
                 app.UseHsts();
             }
 
-            app.UseCors(builder => builder.WithOrigins("http://localhost"));
+            app.UseCors(builder => builder.WithOrigins("http://localhost:8100", "http://localhost"));
 
             app.UseHttpsRedirection();
             app.UseMvc();
