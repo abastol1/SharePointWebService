@@ -26,9 +26,6 @@ namespace SharpWebService.Controllers
     [ApiController]
     public class ValuesController : ControllerBase
     {
-
-        public string globalFilenameTest = "";
-
         // GET api/values
         [Route("api/[controller]")]
         [HttpGet]
@@ -97,23 +94,22 @@ namespace SharpWebService.Controllers
                 foreach (DataRow dr in dt.Rows)
 
                 {
+                    // gets the filename from sharepoint, normally ends with .aspx
                     string fileName = dr["ows_FileLeafRef"].ToString().Split("#")[1];
+                    // Category of each item, used to separate items in the mobile application
                     string category = dr["ows_Category"].ToString();
+                    // Mobile Page in the mobile application, filenaem(list) will be located according to Page and Category in the mobile application
                     string page = dr["ows_MobilePage"].ToString();
+                    // Most of the file ends with .aspx in the sharepoint, fileExtension gets the original file extension using the URL Link
                     string fileExtension = dr["ows_URL"].ToString().Split(',')[0].Split('.')[1];
 
-
-                    //if (!page.ToLower().Equals(pageName.ToLower()))
-                    //{
-                    //    continue;
-                    //}
-
-                    if (fileName.Substring(fileName.Length - 5).Equals(".aspx"))
+                    // replace the .aspx file extension with the original file extension
+                    if (fileName.Contains(".aspx"))
                     {
-                        fileName = fileName.Remove(fileName.Length - 5);
-                        fileName = fileName + "." + fileExtension;
+                        fileName = fileName.Replace(".aspx", ("." + fileExtension));
                     }
 
+                    // Check if the dictionary already contains the page
                     if (!mainList.ContainsKey(page))
                     {
                         // Create a tempDict, used as value for mainList
@@ -137,19 +133,9 @@ namespace SharpWebService.Controllers
                             mainList[page].Add(category, tempList);
                         }
                     }
-
-                    //if (listNameDictionary.ContainsKey(category))
-                    //{
-                    //    listNameDictionary[category].Add(fileName);
-                    //}
-                    //else
-                    //{
-                    //    List<string> valueFileName = new List<string>();
-                    //    valueFileName.Add(fileName);
-                    //    listNameDictionary.Add(category, valueFileName);
-                    //}
                 }
             }
+            // return Serialized JSON object back to the calling application
             return JsonConvert.SerializeObject(mainList);
         }
 
@@ -161,20 +147,26 @@ namespace SharpWebService.Controllers
 
         Return Value: returns the file to via HTTP response/ opens file in default browser
         Local Variables:
-
+                filedata, byte[]: stores contents of requested file
+                query, string: CAML query to access Document Library
+                ds, DataSet: stores all infos from document library table
         Algorithm:
-                    1) 
-                    2) 
-                    3) 
+                    1) Delete all the files if there are any in the 'tempDocuments' folder
+                    2) get data from Document Library and store it in a Dataset
+                    3) Get all the rows(stores information of documents) and store it in DataTable 'dt'
+                    4) Loop through all Rows in the DataTable
+                        5) Get fileName, siteURL, fileExtension from Row in DataTable
+                        6) Change .aspx file extension to original fileExtension 'fileExtension'
+                        7) Download the requested document from SharePoint and store it in tempDocuments
+                        6) Return the FileStreamResult to the calling application
         ************************************************************************************************* */
         // GET api/values/5
         [Route("documents/{filename}")]
         [HttpGet("{filename}")]
-        public async Task<ActionResult> Get(string filename)
+        public async Task<ActionResult> Get(string receivedFileName)
         {
             // making sure any temp documents are not stored on the web api storage
             this.deleteAllTempDocuments();
-            globalFilenameTest = filename;
 
             byte[] filedata = new byte[0];
             string contentType = "";
@@ -184,7 +176,7 @@ namespace SharpWebService.Controllers
                 string query = "<mylistitemrequest>" +
                                 "<Query>" + "</Query>" +
                                 "<ViewFields>" +
-                                    "<FieldRef Name=\"EncodedAbsUrl\"/><FieldRef Name=\"ID\" /><FieldRef Name=\"FileRef\" /><FieldRef Name=\"ID\" /><FieldRef Name=\"Title\" /><FieldRef Name=\"Category\" />" +
+                                    "<FieldRef Name=\"EncodedAbsUrl\"/><FieldRef Name=\"URL\" /><FieldRef Name=\"ID\" /><FieldRef Name=\"FileRef\" /><FieldRef Name=\"ID\" /><FieldRef Name=\"Title\" /><FieldRef Name=\"Category\" />" +
                                 "</ViewFields>" +
                                 "<QueryOptions></QueryOptions>" +
                                 "</mylistitemrequest>";
@@ -222,21 +214,25 @@ namespace SharpWebService.Controllers
                     dt = ds.Tables["Row"].Copy();
                     foreach (DataRow dr in dt.Rows)
                     {
+                        // gets the location of documents in the SharePoint
                         string siteURL = dr["ows_EncodedAbsUrl"].ToString();
+                        // Name of the file
                         string fileName = dr["ows_FileLeafRef"].ToString().Split("#")[1];
-
+                        // Most of the file ends with .aspx in the sharepoint, fileExtension gets the original file extension using the URL Link
+                        string fileExtension = dr["ows_URL"].ToString().Split(',')[0].Split('.')[1];
+                        // replace the .aspx file extension with the original file extension
                         if (fileName.Contains(".aspx"))
                         {
-                            fileName = fileName.Replace(".aspx", ".pdf");
+                            fileName = fileName.Replace(".aspx", ("." + fileExtension));
                         }
-                        if (globalFilenameTest.Equals(fileName))
+                        if (receivedFileName.Equals(fileName))
                         {
                             string filePath = DownLoadAttachment(dr["ows_EncodedAbsUrl"].ToString(), fileName);
                             filedata = System.IO.File.ReadAllBytes(filePath);
                             contentType = this.GetContentType(filePath);
                             var cd = new System.Net.Mime.ContentDisposition
                             {
-                                FileName = globalFilenameTest,
+                                FileName = receivedFileName,
                                 Inline = true
                             };
                             Response.Headers["Content-Disposition"] = cd.ToString();
@@ -386,15 +382,3 @@ namespace SharpWebService.Controllers
         }
     }
 }
-
-//"<Eq>" +
-//    "<FieldRef Name=\"IsOnApp\" />" +
-//    "<Value Type=\"Lookup\">" + "1" + "</Value>" +
-//"</Eq>" +
-
-//"<Where>" +
-//"<Eq>" +
-//    "<FieldRef Name=\"FileLeafRef\" />" +
-//    "<Value Type=\"Text\">" + searchString + "</Value>" +
-//"</Eq>" +
-//"</Where>" +
