@@ -66,32 +66,14 @@ namespace SharpWebService.Controllers
             // Stores all the information from SharePoint Library, <value=PageName, key=Dictionary<value=category, key=list of document Names>>
             Dictionary<string, Dictionary<string, List<string>>> mainList = new Dictionary<string, Dictionary<string, List<string>>>();
 
-            DataTable dt = null;
-            ListsSoapClient.EndpointConfiguration endpoint = new ListsSoapClient.EndpointConfiguration();
-            ListsSoapClient myService = new ListsSoapClient(endpoint);
-            myService.ClientCredentials.UserName.UserName = Data.EmailUserName;
-            myService.ClientCredentials.UserName.Password = Data.EmailCredentials;
-            XmlDocument doc = new XmlDocument();
-            doc.LoadXml(query);
-
-            XElement queryNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//Query")));
-            XElement viewNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//ViewFields")));
-            XElement optionNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//QueryOptions")));
-
-            var retNode = await myService.GetListItemsAsync(Data.documentLibraryName, string.Empty, queryNode, viewNode, string.Empty, optionNode, Data.libraryKey);
-
             // Collection of DataTables, stores many datatables in a single collection
-            DataSet ds = new DataSet();
-            using (StringReader sr = new StringReader(retNode.Body.GetListItemsResult.ToString()))
-            {
-                ds.ReadXml(sr);
-            }
+            DataSet ds = await this.GetDataSetFromSharePoint(query, Data.documentLibraryName);
 
             if (ds.Tables["Row"] != null && ds.Tables["Row"].Rows.Count > 0)
             {
+                DataTable dt = null;
                 dt = ds.Tables["Row"].Copy();
                 foreach (DataRow dr in dt.Rows)
-
                 {
                     // gets the filename from sharepoint, normally ends with .aspx
                     string fileName = dr["ows_FileLeafRef"].ToString().Split("#")[1];
@@ -169,8 +151,6 @@ namespace SharpWebService.Controllers
         {
             // making sure any temp documents are not stored on the web api storage
             this.deleteAllTempDocuments();
-
-
             byte[] filedata = new byte[0];
             string contentType = "";
 
@@ -183,37 +163,12 @@ namespace SharpWebService.Controllers
                                 "</ViewFields>" +
                                 "<QueryOptions></QueryOptions>" +
                                 "</mylistitemrequest>";
-                DataTable dt = null;
-                ListsSoapClient.EndpointConfiguration endpoint = new ListsSoapClient.EndpointConfiguration();
-
-                ListsSoapClient myService = new ListsSoapClient(endpoint);
-                myService.ClientCredentials.UserName.UserName = Data.EmailUserName;
-                myService.ClientCredentials.UserName.Password = Data.EmailCredentials;
-                XmlDocument doc = new XmlDocument();
-                doc.LoadXml(query);
-
-                XElement queryNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//Query")));
-                XElement viewNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//ViewFields")));
-                XElement optionNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//QueryOptions")));
-
-                // Data.documentLibraryName: Display name of the document library
-                // string.Empty: ViewName
-                // queryNode: query element containing the query that determines which records are returned and in what order
-                // viewNode: element that specifies which fields to return in the query and in what order
-                // optionNode: An XML fragment that contains separate nodes for the various properties
-                // Data.libraryKey: string containing the GUID of the parent Website for the list
-                // Return Value: Returns information about items in the list based on the specified query
-                var retNode = await myService.GetListItemsAsync(Data.documentLibraryName, string.Empty, queryNode, viewNode, string.Empty, optionNode, Data.libraryKey);
-
                 // Collection of DataTables, stores many datatables in a single collection
-                DataSet ds = new DataSet();
-                using (StringReader sr = new StringReader(retNode.Body.GetListItemsResult.ToString()))
-                {
-                    ds.ReadXml(sr);
-                }
+                DataSet ds = await this.GetDataSetFromSharePoint(query, Data.documentLibraryName);
 
                 if (ds.Tables["Row"] != null && ds.Tables["Row"].Rows.Count > 0)
                 {
+                    DataTable dt = null;
                     dt = ds.Tables["Row"].Copy();
                     foreach (DataRow dr in dt.Rows)
                     {
@@ -231,8 +186,11 @@ namespace SharpWebService.Controllers
                         // if fileName is same as 'receivedFileName', then download the file and return the File to the client
                         if (receivedFileName.Equals(fileName))
                         {
+                            // Download attachment to 'tempDocuments' folder, and get the complete path
                             string filePath = DownLoadAttachment(dr["ows_EncodedAbsUrl"].ToString(), fileName);
+                            // Reads content of the file into a byte array 'filedata'
                             filedata = System.IO.File.ReadAllBytes(filePath);
+                            // Gets the contentype of the downloaded document
                             contentType = this.GetContentType(filePath);
                             var cd = new System.Net.Mime.ContentDisposition
                             {
@@ -252,7 +210,7 @@ namespace SharpWebService.Controllers
             return new FileStreamResult(new MemoryStream(filedata), contentType);
         }
 
-        /* *********************************************************************
+        /* *********************************************************************************************
         Function Name: GetAnnouncements 
         Purpose: get Announcments & Job Postings from SharePoint Library
         Parameters:
@@ -260,31 +218,88 @@ namespace SharpWebService.Controllers
                 ds, DataSet: stores all infos from document library table
         Return Value: Return Dictionary<Title, Description> that contains information about all the announcements & job postings
         Local Variables:
-                    
+                    announcements, Dictionary: stores information about announement<key=Title, value=Description(Html Format)> 
+                    documentLibraryNames, string[]: stores name of the SharePoint List from where announcements are accessed
         Algorithm:
-                    1) 
-        ********************************************************************* */
+                    1) Loop through 'documentLibraryName' 
+                        2) Get the data from SharePoint using by calling 'GetDataSetFromSharePoint' 
+                        3) Get the description and Title for each announcement
+                        4) add <title, description> to 'announcements' Dictionary
+                    5) Return the 'announcements' Dictionary back to the calling application
+        ********************************************************************************************* */
         [HttpGet("announcements")]
         public async Task<string> GetAnnouncements()
         {
             string query = "<mylistitemrequest>" +
                 "<Query>" +
-                //"<Where>" +
-                //    "<Eq>" +
-                //        "<FieldRef Name=\"Active\" />" +
-                //        "<Value Type=\"Lookup\">1</Value>" +
-                //    "</Eq>" +
-                //"</Where>" +
+                    "<Where>" +
+                        "<Eq>" +
+                            "<FieldRef Name=\"IsActive\" />" +
+                            "<Value Type=\"Lookup\">1</Value>" +
+                        "</Eq>" +
+                    "</Where>" +
                 "</Query>" +
                 "<ViewFields>" +
-                    "<FieldRef Name=\"Description\"/><FieldRef Name=\"Active\" /><FieldRef Name=\"Title\" />" +
+                    "<FieldRef Name=\"Description\"/><FieldRef Name=\"IsActive\" /><FieldRef Name=\"Title\" />" +
                 "</ViewFields>" +
                 "<QueryOptions></QueryOptions>" +
                 "</mylistitemrequest>";
 
             // Stores all the information from SharePoint Library, <value=PageName, key=Dictionary<value=category, key=list of document Names>>
             Dictionary<string, string> announcements = new Dictionary<string, string>();
+            string[] documentLibraryNames = {  "Announcements", "JobPostings", };
 
+            foreach (string library in documentLibraryNames)
+            {
+                // Collection of DataTables, stores many datatables in a single collection
+                DataSet ds = await this.GetDataSetFromSharePoint(query, library);
+
+                if (ds.Tables["Row"] != null && ds.Tables["Row"].Rows.Count > 0)
+                {
+                    DataTable dt = null;
+                    dt = ds.Tables["Row"].Copy();
+                    foreach (DataRow dr in dt.Rows)
+                    {
+                        // Stores description of an Announcement in HTML style(with HTML tags)
+                        string description = dr["ows_Description"].ToString();
+                        // Stores the Title of an Announcement
+                        string title = dr["ows_Title"].ToString();
+
+                        // Ignore for announcement other than JobPosting, if the type of announcement is JobPostings, then add "Job Posting" to the title
+                        if (library.Equals("JobPostings"))
+                        {
+                            title = "Job Posting: " + title;
+                        }
+                        // Add <Key=Title, Value=Description> to 'announcements' Dictionary 
+                        announcements.Add(title, description);
+                    }
+                }
+            }
+            // return Serialized JSON object back to the calling application
+            return JsonConvert.SerializeObject(announcements);
+        }
+
+
+        /* *************************************************************************************************
+        Function Name: GetDataSetFromSharePoint
+        Purpose: get DataSet from the document library from SharePoint
+        Parameters:
+                1) query, string: CAML Query to retrieve information from Document Library
+                2) libraryName, string: Name of the Document Library in SharePoint, information will be retrive from this library
+
+        Return Value: returns DataSet with information about DocumentLibrary
+        Local Variables:
+                
+        Algorithm:
+                1) Add Sharp Credentials to the ListsSoapClient(Username, Password)
+                2) Create a new XmlDocument() and load query as XML
+                3) Declare new DataSet to store information obtained from SharePoint
+                4) Call the GetListItemsAsync function by passing query, libraryName and libraryKey
+                5) Read the result from GetListItemsAsync into a DataSet
+                6) Return the DataSet to calling fucntion
+        ***************************************************************************************************** */
+        private async Task<DataSet> GetDataSetFromSharePoint(string query, string libraryName)
+        {
             ListsSoapClient.EndpointConfiguration endpoint = new ListsSoapClient.EndpointConfiguration();
             ListsSoapClient myService = new ListsSoapClient(endpoint);
             myService.ClientCredentials.UserName.UserName = Data.EmailUserName;
@@ -295,40 +310,23 @@ namespace SharpWebService.Controllers
             XElement queryNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//Query")));
             XElement viewNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//ViewFields")));
             XElement optionNode = XElement.Load(new XmlNodeReader(doc.SelectSingleNode("//QueryOptions")));
-            string[] documentLibraryNames = { "JobPostings", "Announcements" };
 
-            DataTable dt = null;
+            // Data.documentLibraryName: Display name of the document library
+            // string.Empty: ViewName
+            // queryNode: query element containing the query that determines which records are returned and in what order
+            // viewNode: element that specifies which fields to return in the query and in what order
+            // optionNode: An XML fragment that contains separate nodes for the various properties
+            // Data.libraryKey: string containing the GUID of the parent Website for the list
+            // Return Value: Returns information about items in the list based on the specified query
+            var retNode = await myService.GetListItemsAsync(libraryName, string.Empty, queryNode, viewNode, string.Empty, optionNode, Data.libraryKey);
 
-            foreach (string library in documentLibraryNames)
+            // Collection of DataTables, stores many datatables in a single collection
+            DataSet ds = new DataSet();
+            using (StringReader sr = new StringReader(retNode.Body.GetListItemsResult.ToString()))
             {
-                var retNode = await myService.GetListItemsAsync(library, string.Empty, queryNode, viewNode, string.Empty, optionNode, Data.libraryKey);
-
-                // Collection of DataTables, stores many datatables in a single collection
-                DataSet ds = new DataSet();
-                using (StringReader sr = new StringReader(retNode.Body.GetListItemsResult.ToString()))
-                {
-                    ds.ReadXml(sr);
-                }
-
-                if (ds.Tables["Row"] != null && ds.Tables["Row"].Rows.Count > 0)
-                {
-                    dt = ds.Tables["Row"].Copy();
-                    foreach (DataRow dr in dt.Rows)
-                    {
-                        string description = dr["ows_Description"].ToString();
-                        string title = dr["ows_Title"].ToString();
-
-                        if (library.Equals("JobPostings"))
-                        {
-                            title = "Job Posting: " + title;
-                        }
-                        announcements.Add(title, description);
-                    }
-                }
+                ds.ReadXml(sr);
             }
-
-            // return Serialized JSON object back to the calling application
-            return JsonConvert.SerializeObject(announcements);
+            return ds;
         }
 
 
@@ -465,3 +463,11 @@ namespace SharpWebService.Controllers
         }
     }
 }
+
+
+
+// // Query Sample
+//"<Eq>" +
+//    "<FieldRef Name=\"Title\" />" +
+//    "<Value Type=\"Text\">" + "Test job" + "</Value>" +
+//"</Eq>" +
