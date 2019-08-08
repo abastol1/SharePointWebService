@@ -26,15 +26,61 @@ namespace SharpWebService.Controllers
     [ApiController]
     public class ValuesController : ControllerBase
     {
-        // GET api/values
-        [Route("api/[controller]")]
+        /* *****************************************************************************************************
+        Function Name: Get, apiURL=> /links
+        Purpose: to get all the links needed for Mobile App
+        Parameters: none
+
+        Return Value: dictionary with LinkTitle as key, URL as value
+        Local Variables:
+                    query, string: CAML Query that specifies which fields to extract from given condition(optional) inside <Query> </Query>
+                    mobileLinkis, Dictionary: Stores LinkTitle as key, LinkURL as value
+        Algorithm:
+                    1) Get the data from SharePoint using by calling 'GetDataSetFromSharePoint' 
+                    2) Get the description and Title for each announcement
+                    3) add <Title, URL> to 'mobileLinks' Dictionary
+                    4) Return the 'mobileLinks' Dictionary back to the calling application
+        ***************************************************************************************************** */
+        [Route("links")]
         [HttpGet]
-        public ActionResult<IEnumerable<string>> Get()
+        public async Task<string> GetLinks()
         {
-            return new string[] { "value1", "value2" };
+            // Query the data from SharePoint where the 'Active' column is 
+            string query = "<mylistitemrequest>" +
+                "<Query>" +
+                    "<Where> <Eq> <FieldRef Name=\"IsActive\" /> <Value Type=\"Lookup\">1</Value> </Eq> </Where>" +
+                "</Query>" +
+                "<ViewFields>" +
+                    "<FieldRef Name=\"Title\"/><FieldRef Name=\"Category\" /><FieldRef Name=\"URL\" /><FieldRef Name=\"IsActive\" />" +
+                "</ViewFields>" +
+                "<QueryOptions></QueryOptions>" +
+                "</mylistitemrequest>";
+
+
+            Dictionary<string, string> mobileLinks = new Dictionary<string, string>();
+            // Collection of DataTables, stores many datatables in a single collection
+            DataSet ds = await this.GetDataSetFromSharePoint(query, "MobileAppLinks");
+
+            if (ds.Tables["Row"] != null && ds.Tables["Row"].Rows.Count > 0)
+            {
+                DataTable dt = null;
+                dt = ds.Tables["Row"].Copy();
+                foreach (DataRow dr in dt.Rows)
+                {
+                    // Stores description of an Announcement in HTML style(with HTML tags)
+                    string URL = dr["ows_URL"].ToString();
+                    // Stores the Title of an Announcement
+                    string title = dr["ows_Title0"].ToString();
+
+                    // Add <Key=Title, Value=Description> to 'announcements' Dictionary 
+                    mobileLinks.Add(title, URL);
+                }
+            }
+            // return Serialized JSON object back to the calling application
+            return JsonConvert.SerializeObject(mobileLinks);
         }
 
-        /* ***************************************************************************************************************
+        /* *****************************************************************************************************
         Function Name: GetFileNameList
         Purpose: to get list of all the files that are going to be addded on 
         Parameters: none
@@ -50,7 +96,7 @@ namespace SharpWebService.Controllers
                     4) if category already exists in the Dictionary, add filename to the value of the category as key
                     5) if categoy doesnot exists in the Dictionary, add category as key, and filename as value
                     6) return the dictionary as string to the calling function
-        **************************************************************************************************************** */
+        ***************************************************************************************************** */
         //[Route("fileNameList")]
         [HttpGet("fileNameList")]
         public async Task<string> GetFileNameList()
@@ -124,7 +170,7 @@ namespace SharpWebService.Controllers
         }
 
 
-        /* ***********************************************************************************************
+        /* *****************************************************************************************************
         Function Name: Get
         Purpose: to get the file received as input from mobile application 
         Parameters: filename: string, name of the file
@@ -143,11 +189,11 @@ namespace SharpWebService.Controllers
                         6) Change .aspx file extension to original fileExtension 'fileExtension'
                         7) Download the requested document from SharePoint and store it in tempDocuments
                         6) Return the FileStreamResult to the calling application
-        ************************************************************************************************* */
+        ***************************************************************************************************** */
         // GET api/values/5
         [Route("documents/{receivedFileName}")]
         [HttpGet("{receivedFileName}")]
-        public async Task<ActionResult> Get(string receivedFileName)
+        public async Task<ActionResult> GetDocument(string receivedFileName)
         {
             // making sure any temp documents are not stored on the web api storage
             this.deleteAllTempDocuments();
@@ -210,7 +256,7 @@ namespace SharpWebService.Controllers
             return new FileStreamResult(new MemoryStream(filedata), contentType);
         }
 
-        /* *********************************************************************************************
+        /* *****************************************************************************************************
         Function Name: GetAnnouncements 
         Purpose: get Announcments & Job Postings from SharePoint Library
         Parameters:
@@ -226,18 +272,15 @@ namespace SharpWebService.Controllers
                         3) Get the description and Title for each announcement
                         4) add <title, description> to 'announcements' Dictionary
                     5) Return the 'announcements' Dictionary back to the calling application
-        ********************************************************************************************* */
+        ***************************************************************************************************** */
         [HttpGet("announcements")]
         public async Task<string> GetAnnouncements()
         {
+
+            // Query the data from SharePoint where the 'Active' column is 
             string query = "<mylistitemrequest>" +
                 "<Query>" +
-                    "<Where>" +
-                        "<Eq>" +
-                            "<FieldRef Name=\"IsActive\" />" +
-                            "<Value Type=\"Lookup\">1</Value>" +
-                        "</Eq>" +
-                    "</Where>" +
+                    "<Where> <Eq> <FieldRef Name=\"IsActive\" /> <Value Type=\"Lookup\">1</Value> </Eq> </Where>" +
                 "</Query>" +
                 "<ViewFields>" +
                     "<FieldRef Name=\"Description\"/><FieldRef Name=\"IsActive\" /><FieldRef Name=\"Title\" />" +
@@ -247,7 +290,7 @@ namespace SharpWebService.Controllers
 
             // Stores all the information from SharePoint Library, <value=PageName, key=Dictionary<value=category, key=list of document Names>>
             Dictionary<string, string> announcements = new Dictionary<string, string>();
-            string[] documentLibraryNames = {  "Announcements", "JobPostings", };
+            string[] documentLibraryNames = { "Announcements", "JobPostings", };
 
             foreach (string library in documentLibraryNames)
             {
@@ -280,7 +323,7 @@ namespace SharpWebService.Controllers
         }
 
 
-        /* *************************************************************************************************
+        /* *****************************************************************************************************
         Function Name: GetDataSetFromSharePoint
         Purpose: get DataSet from the document library from SharePoint
         Parameters:
@@ -350,13 +393,14 @@ namespace SharpWebService.Controllers
         {
             string completeFilePath = "";
             HttpWebRequest request;
-            HttpWebResponse response = null;
             try
             {
                 request = (HttpWebRequest)WebRequest.Create(strURL);
                 request.Credentials = System.Net.CredentialCache.DefaultCredentials;
                 request.Timeout = 10000;
                 request.AllowWriteStreamBuffering = false;
+
+                HttpWebResponse response = null;
                 response = (HttpWebResponse)request.GetResponse();
                 Stream s = response.GetResponseStream();
                 //Write to disk
@@ -389,7 +433,7 @@ namespace SharpWebService.Controllers
         {
         }
 
-        /* *********************************************************************
+        /* *****************************************************************************************************
         Function Name: GetContentType
         Purpose: to get the content type of a file
         Parameters: path: string, an absolute path of a file
@@ -402,7 +446,7 @@ namespace SharpWebService.Controllers
                     1) get mimetypes from GetMimeTypes() function
                     2) get only the extension of file
                     3) using ext as key, return the value
-        ********************************************************************* */
+        ***************************************************************************************************** */
         private string GetContentType(string path)
         {
             var types = GetMimeTypes();
@@ -411,7 +455,7 @@ namespace SharpWebService.Controllers
         }
 
 
-        /* *********************************************************************
+        /* *****************************************************************************************************
         Function Name: GetMimeTypes
         Purpose: to get the dictionary of mime types where key=file extension, value=mimetype
         Parameters:
@@ -421,7 +465,7 @@ namespace SharpWebService.Controllers
                     none
         Algorithm:
                     1) return the dictionary
-        ********************************************************************* */
+        ***************************************************************************************************** */
         private Dictionary<string, string> GetMimeTypes()
         {
             return new Dictionary<string, string>
@@ -440,7 +484,7 @@ namespace SharpWebService.Controllers
             };
         }
 
-        /* *********************************************************************
+        /* *****************************************************************************************************
         Function Name: deleteAllTempDocuments
         Purpose: To delete all the documents in TempDocuments directory that might be download when accessing SharePoint API
         Parameters: None
@@ -452,14 +496,23 @@ namespace SharpWebService.Controllers
                     1) Get info of tempDocuments
                     2) Loop throught all the files in the directory
                         3) Delete the file
-        ********************************************************************* */
+        ***************************************************************************************************** */
         private void deleteAllTempDocuments()
         {
             DirectoryInfo tempInfo = new DirectoryInfo(Directory.GetCurrentDirectory().ToString() + @"\wwwroot\tempDocuments\");
-            foreach (FileInfo file in tempInfo.GetFiles())
+            try
             {
-                file.Delete();
+                foreach (FileInfo file in tempInfo.GetFiles())
+                {
+                    file.Delete();
+                }
             }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Exception thrown when deleting Documents in tempDocuemtns: \n Message: ", ex.Message);
+                throw ex;
+            }
+
         }
     }
 }
